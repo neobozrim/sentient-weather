@@ -164,31 +164,32 @@ def generate_color_palette(city, weather_description, current_temperature,
         print(f"Error generating color palette: {str(e)}")
         return None
 
+import os
+import time
+import json
+import requests
+from datetime import datetime, timedelta
+from flask import url_for
+from werkzeug.utils import secure_filename
+
 def generate_city_image(city, weather_description):
-    """Generate city image using DALL-E 3 with caching."""
+    """Generate or retrieve a cached city image based on city and weather description."""
     try:
-        import time
-        import os
-        import requests
-        import json
-        from werkzeug.utils import secure_filename
-        from datetime import datetime, timedelta
-        
-        # Setup
+        # Define directories for static images and cache
         static_dir = os.path.join('static', 'images')
         cache_dir = os.path.join('static', 'cache')
         os.makedirs(static_dir, exist_ok=True)
         os.makedirs(cache_dir, exist_ok=True)
-        
-        # Create cache key from city and weather
+
+        # Create a cache key based on the city and weather description
         safe_city_name = secure_filename(city.lower())
         safe_weather = secure_filename(weather_description.lower())
         cache_key = f"{safe_city_name}_{safe_weather}"
         
-        # Cache file paths
+        # Paths for cached data
         cache_file = os.path.join(cache_dir, f"{cache_key}.json")
-        
-        # Check if cache exists and is valid (less than 24 hours old)
+
+        # Check if the cache is valid (exists and is less than 24 hours old)
         if os.path.exists(cache_file):
             with open(cache_file, 'r') as f:
                 cache_data = json.load(f)
@@ -200,39 +201,36 @@ def generate_city_image(city, weather_description):
                 if os.path.exists(os.path.join('static', image_path.lstrip('/static/'))):
                     print(f"Using cached image for {city} with {weather_description}")
                     return image_path
-        
-        # If we get here, we need to generate a new image
+
+        # If cache is invalid or doesn't exist, generate a new image
+        from openai import OpenAI  # Make sure OpenAI API client is available and configured
         client = OpenAI()
-        
-        # Generate new filename
+
+        # Generate a unique filename for the image
         timestamp = int(time.time())
         filename = f"{cache_key}_{timestamp}.png"
-        
-        # Clean up old images
-        existing_images = []
-        for root, _, files in os.walk(static_dir):
-            for f in files:
-                if f.endswith('.png'):
-                    full_path = os.path.join(root, f)
-                    existing_images.append((full_path, os.path.getctime(full_path)))
-        
-        # Sort by creation time and keep only the 20 most recent
-        existing_images.sort(key=lambda x: x[1], reverse=True)
+        image_path = os.path.join(static_dir, filename)
+
+        # Clean up older images (keeping only the 20 most recent images)
+        existing_images = sorted(
+            ((os.path.join(static_dir, f), os.path.getctime(os.path.join(static_dir, f)))
+             for f in os.listdir(static_dir) if f.endswith('.png')),
+            key=lambda x: x[1],
+            reverse=True
+        )
         if len(existing_images) > 20:
             for old_image, _ in existing_images[20:]:
                 try:
                     os.remove(old_image)
-                    # Also remove corresponding cache file if it exists
-                    cache_base = os.path.splitext(os.path.basename(old_image))[0]
-                    old_cache = os.path.join(cache_dir, f"{cache_base}.json")
+                    # Remove corresponding cache file if it exists
+                    old_cache = os.path.join(cache_dir, f"{os.path.splitext(os.path.basename(old_image))[0]}.json")
                     if os.path.exists(old_cache):
                         os.remove(old_cache)
                 except Exception as e:
                     print(f"Error removing old file {old_image}: {str(e)}")
-        
-        # Generate new image
+
+        # Generate the image using OpenAI's DALL-E API
         prompt = f"An oil painting of the most iconic scenery from {city} where the weather is {weather_description}."
-        
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
@@ -240,28 +238,25 @@ def generate_city_image(city, weather_description):
             quality="standard",
             n=1,
         )
-        
+
+        # Check the response and download the image
         image_url = response.data[0].url
-        
-        # Download and save the image
         img_response = requests.get(image_url)
         if img_response.status_code == 200:
-            image_path = os.path.join(static_dir, filename)
             with open(image_path, 'wb') as f:
                 f.write(img_response.content)
-            
-            # Create cache entry
-            relative_path = f'/static/images/{filename}'
+
+            # Create a cache entry for the newly generated image
+            relative_path = url_for('static', filename=f'images/{filename}')
             cache_data = {
                 'timestamp': timestamp,
                 'image_path': relative_path,
                 'city': city,
                 'weather': weather_description
             }
-            
             with open(cache_file, 'w') as f:
                 json.dump(cache_data, f)
-            
+
             print(f"Generated new image for {city} with {weather_description}")
             return relative_path
         else:
