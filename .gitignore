@@ -1,0 +1,35 @@
+# Environment variables
+.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Generated images and cache
+static/images/*
+static/cache/*
+!static/images/.gitkeep
+!static/cache/.gitkeep
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Flask session files
+flask_session/
+
+# Database files
+*.db
+*.sqlite
+
+# OS specific files
+.DS_Store
+Thumbs.db

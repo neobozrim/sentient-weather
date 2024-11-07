@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentient Weather App</title>
+    <link rel="stylesheet" href="static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Sentient Weather</h1>
+        
+        <form class="search-container" action="/" method="POST">
+            <input type="text" name="city" placeholder="Enter city name..." required>
+            <button type="submit">Get Weather</button>
+        </form>
+
+        {% if error %}
+        <div class="error-message" style="display: block;">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        {% if weather_data %}
+        <div class="result-container">
+            <div class="weather-info">
+                <div class="weather-card">
+                    <h2>{{ city }}</h2>
+                    <p class="temperature">{{ weather_data.current.temperature }}°C</p>
+                    <p class="condition">{{ weather_description }}</p>
+                    <p>Cloud Cover: {{ weather_data.current.cloud_cover }}%</p>
+                    <p>Wind Speed: {{ weather_data.current.wind_speed }} m/s</p>
+                </div>
+
+                <div class="forecast">
+                    {% for day in weather_data.forecast[:3] %}
+                    <div class="weather-card">
+                        <h3>{{ day.date.strftime('%A') }}</h3>
+                        <p>High: {{ "%.1f"|format(day.temperature_max) }}°C</p>
+                        <p>Low: {{ "%.1f"|format(day.temperature_min) }}°C</p>
+                        <p>Rain: {{ "%.1f"|format(day.precipitation_sum) }}mm</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="image-container">
+                {% if image_path %}
+                <img src="{{ image_path }}" alt="Generated visualization" class="city-image">
+                {% endif %}
+            </div>
+
+            {% if colors %}
+            <div class="color-palette">
+                <div class="color-swatch" style="background-color: {{ colors.dominant_color }}" title="Dominant"></div>
+                <div class="color-swatch" style="background-color: {{ colors.secondary_color }}" title="Secondary"></div>
+                <div class="color-swatch" style="background-color: {{ colors.accent_color }}" title="Accent"></div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        {% if colors %}
+        // Update color palette
+        document.documentElement.style.setProperty('--color-dominant', '{{ colors.dominant_color }}');
+        document.documentElement.style.setProperty('--color-secondary', '{{ colors.secondary_color }}');
+        document.documentElement.style.setProperty('--color-accent', '{{ colors.accent_color }}');
+        {% endif %}
+    </script>
+</body>
+</html>
