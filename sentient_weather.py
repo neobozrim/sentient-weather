@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, url_for
 from dotenv import load_dotenv
 import os
 from datetime import datetime
@@ -166,20 +166,23 @@ def generate_city_image(city, weather_description):
         import time
         import requests
         from werkzeug.utils import secure_filename
-        
+
+        # Get the directory of the current script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
         # Setup paths
-        static_dir = os.path.join('static', 'images')
+        static_dir = os.path.join(script_dir, 'static', 'images')
         os.makedirs(static_dir, exist_ok=True)
-        
+
         # Create filename
         timestamp = int(time.time())
         safe_city_name = secure_filename(city.lower())
         filename = f"{safe_city_name}_{timestamp}.png"
-        
+
         # Generate image
         client = OpenAI()
         prompt = f"An oil painting of the most iconic scenery from {city} where the weather is {weather_description}."
-        
+
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
@@ -187,17 +190,18 @@ def generate_city_image(city, weather_description):
             quality="standard",
             n=1,
         )
-        
+
         image_url = response.data[0].url
-        
+
         # Download and save image
         img_response = requests.get(image_url)
         if img_response.status_code == 200:
             image_path = os.path.join(static_dir, filename)
             with open(image_path, 'wb') as f:
                 f.write(img_response.content)
-            
-            return f'/static/images/{filename}'
+
+            # Use url_for to generate the correct URL
+            return url_for('static', filename=f'images/{filename}')
             
     except Exception as e:
         print(f"Error generating city image: {str(e)}")
