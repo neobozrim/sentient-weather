@@ -176,8 +176,8 @@ def generate_city_image(city, weather_description):
     """Generate or retrieve a cached city image based on city and weather description."""
     try:
         # Define directories for static images and cache
-        static_dir = os.path.join('static', 'images')
-        cache_dir = os.path.join('static', 'cache')
+        static_dir = os.path.join('sentient-weather', 'static', 'images')
+        cache_dir = os.path.join('sentient-weather', 'static', 'images')
         os.makedirs(static_dir, exist_ok=True)
         os.makedirs(cache_dir, exist_ok=True)
 
