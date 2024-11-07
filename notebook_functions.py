@@ -175,21 +175,19 @@ from werkzeug.utils import secure_filename
 def generate_city_image(city, weather_description):
     """Generate or retrieve a cached city image based on city and weather description."""
     try:
-        # Define directories for static images and cache
+        # Define directories for static images and cache within the project folder
         static_dir = os.path.join('sentient-weather', 'static', 'images')
-        cache_dir = os.path.join('sentient-weather', 'static', 'images')
-        os.makedirs(static_dir, exist_ok=True)
-        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(static_dir, exist_ok=True)  # Ensure directory exists
 
         # Create a cache key based on the city and weather description
         safe_city_name = secure_filename(city.lower())
         safe_weather = secure_filename(weather_description.lower())
         cache_key = f"{safe_city_name}_{safe_weather}"
         
-        # Paths for cached data
-        cache_file = os.path.join(cache_dir, f"{cache_key}.json")
+        # Path for the cached JSON data
+        cache_file = os.path.join(static_dir, f"{cache_key}.json")
 
-        # Check if the cache is valid (exists and is less than 24 hours old)
+        # Check if a valid cached image exists
         if os.path.exists(cache_file):
             with open(cache_file, 'r') as f:
                 cache_data = json.load(f)
@@ -198,12 +196,12 @@ def generate_city_image(city, weather_description):
             if datetime.now() - cache_timestamp < timedelta(hours=24):
                 # Cache is valid
                 image_path = cache_data['image_path']
-                if os.path.exists(os.path.join('static', image_path.lstrip('/static/'))):
+                if os.path.exists(os.path.join('sentient-weather', 'static', image_path.lstrip('/static/'))):
                     print(f"Using cached image for {city} with {weather_description}")
                     return image_path
 
-        # If cache is invalid or doesn't exist, generate a new image
-        from openai import OpenAI  # Make sure OpenAI API client is available and configured
+        # Initialize the OpenAI client for image generation
+        from openai import OpenAI
         client = OpenAI()
 
         # Generate a unique filename for the image
@@ -223,7 +221,7 @@ def generate_city_image(city, weather_description):
                 try:
                     os.remove(old_image)
                     # Remove corresponding cache file if it exists
-                    old_cache = os.path.join(cache_dir, f"{os.path.splitext(os.path.basename(old_image))[0]}.json")
+                    old_cache = os.path.join(static_dir, f"{os.path.splitext(os.path.basename(old_image))[0]}.json")
                     if os.path.exists(old_cache):
                         os.remove(old_cache)
                 except Exception as e:
@@ -246,7 +244,7 @@ def generate_city_image(city, weather_description):
             with open(image_path, 'wb') as f:
                 f.write(img_response.content)
 
-            # Create a cache entry for the newly generated image
+            # Use url_for to generate the correct URL path for serving the image
             relative_path = url_for('static', filename=f'images/{filename}')
             cache_data = {
                 'timestamp': timestamp,
