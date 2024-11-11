@@ -6,6 +6,14 @@ from retry_requests import retry
 from anthropic import Anthropic
 from openai import OpenAI
 import json
+import os
+import time
+import requests
+from datetime import datetime, timedelta
+from flask import url_for
+from werkzeug.utils import secure_filename
+from typing import Dict, Optional, Set
+
 
 def get_city_coordinates(city):
     """Get coordinates for a given city."""
@@ -14,7 +22,7 @@ def get_city_coordinates(city):
         location = geolocator.geocode(city)
         return (location.latitude, location.longitude)
     except:
-        return "City not found"
+        return None
 
 def get_weather_data(latitude, longitude):
     """Get current weather and forecast data from Open Meteo API."""
@@ -111,42 +119,287 @@ def get_weather_description(weather_code):
     }
     return weather_codes.get(int(weather_code), 'Unknown')
 
-def generate_color_palette(city, weather_description, current_temperature,
-                         current_precipitation, current_cloud_cover,
-                         current_wind_speed, is_day):
+def generate_color_palette(city, weather_data, weather_description):
     """Generate color palette using Anthropic API."""
     try:
         client = Anthropic()
+
+        # First, let's validate our input data
+        print(f"Generating palette for: {city}")
+        print(f"Weather data received: {weather_data}")
+        print(f"Weather description: {weather_description}")
+
+        # Check if we have all required weather data
+        if not weather_data or 'current' not in weather_data:
+            raise ValueError("Weather data is missing or incomplete")
+
+        # Extract current weather data
+        current_weather = weather_data['current']
+        required_fields = ['temperature', 'precipitation', 'cloud_cover', 'wind_speed', 'is_day']
+        for field in required_fields:
+            if field not in current_weather:
+                raise ValueError(f"Missing required weather field: {field}")
         
         prompt = f"""
-        You are a leading visual designer. You goal is to design attractive, vibrant color palettes for a weather app. 
-        Each color palette is inspired by the unique atmosphere of a city and current weather conditions.
+        You are an expert UI designer specializing in color theory. Your goal is to generate a well balanced color palette for a weather app webpage.
+        The color palette is inspired by the unique atmosphere of a city and the current weather conditions.
         The city and current weather conditions are:
         - location: {city}
         - weather description: {weather_description}
-        - current temperature: {current_temperature}
-        - current precipitation: {current_precipitation}
-        - current cloud cover: {current_cloud_cover}
-        - current wind speed: {current_wind_speed}
-        - is it day or night: {is_day} (0 is night, 1 is day)
-        
-        Based on those inputs, using the 60-30-10 rule suggest a well-balanced color palette that works well for websites and consists of three colors: 
-        - dominant color
-        - secondary color 
-        - accent color
-        
-        Be very creative when designing the palette and remember to have it inspired by the unique atmosphere of the city and the current weather conditions.
+        - current temperature: {current_weather['temperature']}°C
+        - current precipitation: {current_weather['precipitation']}mm
+        - current cloud cover: {current_weather['cloud_cover']}%
+        - current wind speed: {current_weather['wind_speed']}km/h
+
+        Based on the unique atmosphere that the city is known for and the current weather, here are the colors that need to be in the color palette:
+           * color_page_background 
+           * color_tiles_container  
+           * color_tiles 
+        Then generate the following colors of the contents shown in the weather tiles, ensuring excellent readability: 
+           * color_tile_heading
+           * color_tile_temp_high
+           * color_tile_temp_low
+           * color_tile_weather_details
+
+        IMPORTANT! Ensure excellent readability and proper contrast when the colors are combined on a webpage. 
+        Be creative and remember to have it inspired by the unique atmosphere of the city and the current weather conditions.
+        Return colors in hexadecimal format (e.g., #RRGGBB).
         """
 
         messages = [{
             "role": "user",
-            "content": f"""{prompt}.
+            "content": f"""{prompt}
             Requirements:
             - The output must be valid JSON
-            - Use ONLY the following keys: dominant_color, secondary_color, accent_color
-            - Each key should get a hex color code
+            - Use ONLY the following keys: color_page_background, color_tiles_container, color_tiles, color_tile_heading, color_tile_temp_high, color_tile_temp_low, color_tile_weather_details
+            - Each key should get a hexadecimal color code (e.g., #RRGGBB)
             - Do not include any explanation or other text
             - Each value should be of type string (str)
+            """
+        }]
+
+        print("Sending request to Anthropic API...")
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            temperature=0.7,
+            messages=messages
+        )
+
+        print(f"Received response: {response.content}")
+        colors = json.loads(response.content[0].text)
+        
+        # Validate the response format
+        required_colors = [
+            'color_page_background', 'color_tiles_container', 'color_tiles',
+            'color_tile_heading', 'color_tile_temp_high', 'color_tile_temp_low',
+            'color_tile_weather_details'
+        ]
+
+        def rgb_to_hex(rgb_str):
+            """Convert RGB string to hex format."""
+            if rgb_str.startswith('#'):
+                return rgb_str
+            try:
+                # Extract numbers from rgb(r, g, b) format
+                rgb_vals = [int(x.strip()) for x in rgb_str.strip('rgb()').split(',')]
+                return '#{:02x}{:02x}{:02x}'.format(*rgb_vals)
+            except:
+                raise ValueError(f"Invalid color format: {rgb_str}")
+
+        # Convert any RGB colors to hex and validate
+        for color in required_colors:
+            if color not in colors:
+                raise ValueError(f"Missing required color: {color}")
+            if not isinstance(colors[color], str):
+                raise ValueError(f"Invalid color format for {color}: {colors[color]}")
+            # Convert to hex if in RGB format
+            colors[color] = rgb_to_hex(colors[color])
+
+        return colors
+
+    except Exception as e:
+        print(f"Error generating color palette: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        return None
+
+def get_default_fonts():
+    """Return default font configuration when font generation fails"""
+    return {
+        'primary_heading': {
+            'family': 'Playfair Display',
+            'fallback': 'serif',
+            'weight': '700',
+            'style': 'normal',
+            'url_params': 'wght@700'  # Added for URL construction
+        },
+        'secondary_heading': {
+            'family': 'Montserrat',
+            'fallback': 'sans-serif',
+            'weight': '600',
+            'style': 'normal',
+            'url_params': 'wght@600'
+        },
+        'body_text': {
+            'family': 'Open Sans',
+            'fallback': 'sans-serif',
+            'weight': '400',
+            'style': 'normal',
+            'url_params': 'wght@400'
+        },
+        'accent_text': {
+            'family': 'Roboto Condensed',
+            'fallback': 'sans-serif',
+            'weight': '400',
+            'style': 'normal',
+            'url_params': 'wght@400'
+        }
+    }
+
+def validate_font_data(font_data, category, default_fonts):
+    """Validate and normalize font data for a category"""
+    default = default_fonts[category]
+    validated = {}
+    
+    # Ensure all required fields exist with correct types
+    validated['family'] = str(font_data.get('family', default['family']))
+    validated['weight'] = str(font_data.get('weight', default['weight']))
+    validated['style'] = str(font_data.get('style', default['style']))
+    validated['fallback'] = str(font_data.get('fallback', default['fallback']))
+    
+    # Construct URL parameters
+    validated['url_params'] = f"wght@{validated['weight']}"
+    if validated['style'] != 'normal':
+        validated['url_params'] += f",{validated['style']}"
+        
+    return validated
+
+
+def generate_google_fonts_url(processed_fonts):
+    """Generate Google Fonts URL with correct parameters"""
+    font_requests = []
+    
+    for category, font in processed_fonts.items():
+        if category != 'google_fonts_url':  # Skip the URL entry itself
+            family = font['family'].replace(' ', '+')
+            font_requests.append(f"family={family}:{font['url_params']}")
+    
+    return f"https://fonts.googleapis.com/css2?{'&'.join(font_requests)}&display=swap"
+
+
+def process_fonts(generated_fonts):
+    """Process and validate font recommendations"""
+    try:
+        if not generated_fonts:
+            return get_default_fonts()
+
+        # Parse JSON if needed
+        if isinstance(generated_fonts, str):
+            try:
+                generated_fonts = json.loads(generated_fonts)
+            except json.JSONDecodeError:
+                return get_default_fonts()
+
+        # Get defaults for validation
+        default_fonts = get_default_fonts()
+        processed_fonts = {}
+        
+        # Process each font category
+        for category in ['primary_heading', 'secondary_heading', 'body_text', 'accent_text']:
+            if category in generated_fonts:
+                processed_fonts[category] = validate_font_data(
+                    generated_fonts[category],
+                    category,
+                    default_fonts
+                )
+            else:
+                processed_fonts[category] = default_fonts[category]
+
+        # Generate Google Fonts URL
+        processed_fonts['google_fonts_url'] = generate_google_fonts_url(processed_fonts)
+        
+        print("Successfully processed fonts:", json.dumps(processed_fonts, indent=2))
+        return processed_fonts
+        
+    except Exception as e:
+        print(f"Error processing fonts: {str(e)}")
+        return get_default_fonts()
+
+
+def get_css_variables(fonts):
+    """Generate CSS variables with font-family declarations"""
+    if not fonts:
+        return get_css_variables(get_default_fonts())
+        
+    css_vars = {}
+    
+    try:
+        for category, font in fonts.items():
+            if category != 'google_fonts_url':
+                var_name = f"--font-{category.replace('_', '-')}"
+                # Properly quote font family names that contain spaces
+                family = f"'{font['family']}'" if ' ' in font['family'] else font['family']
+                css_vars[var_name] = f"{family}, {font['fallback']}"
+                
+                # Add weight and style variables
+                css_vars[f"{var_name}-weight"] = font['weight']
+                css_vars[f"{var_name}-style"] = font['style']
+                
+        print("Generated CSS variables:", css_vars)
+        return css_vars
+        
+    except Exception as e:
+        print(f"Error generating CSS variables: {str(e)}")
+        return get_css_variables(get_default_fonts())
+
+def generate_font_recommendations(city: str, weather_data: Dict) -> Optional[Dict]:
+    """
+    Generate font recommendations for a city based on its unique characteristics and current weather.
+    Returns a dictionary with font families and their weights/styles.
+    """
+    try:
+        client = Anthropic()
+        
+        # Extract relevant weather data
+        current_weather = weather_data['current']
+        weather_description = get_weather_description(current_weather['weather_code'])
+        
+        prompt = f"""
+        You are an expert typography designer specializing in creating unique digital experiences. 
+        Generate font recommendations for {city} that reflect its unique character and current weather conditions:
+        - Weather: {weather_description}
+        - Temperature: {current_weather['temperature']}°C
+        - Cloud Cover: {current_weather['cloud_cover']}%
+        
+        Consider these aspects of the city:
+        1. Historical significance and age
+        2. Cultural characteristics
+        3. Primary industries/identity (tech hub, cultural center, financial district, etc.)
+        4. Geographic location and regional influences
+        
+        For each font category, recommend a specific Google Font that best matches the city's character:
+
+        The response must include these exact categories:
+        1. primary_heading: For the main city name and temperature (should be distinctive)
+        2. secondary_heading: For weather condition descriptions and daily forecasts
+        3. body_text: For detailed weather information
+        4. accent_text: For small labels and secondary information
+        """
+
+        messages = [{
+            "role": "user",
+            "content": f"""{prompt}
+            Requirements for response format:
+            - Must be valid JSON
+            - Use ONLY these keys: primary_heading, secondary_heading, body_text, accent_text
+            - Each value should be an object with these exact keys:
+              * family: string (font family name)
+              * weight: string (font weight, e.g. "400", "700")
+              * style: string (e.g. "normal", "italic")
+              * fallback: string (fallback font category)
+            - Do not include any explanation or other text
             """
         }]
 
@@ -157,27 +410,39 @@ def generate_color_palette(city, weather_description, current_temperature,
             messages=messages
         )
 
-        colors = json.loads(response.content[0].text)
-        return colors
+        # Parse and validate the response
+        font_data = json.loads(response.content[0].text)
+        print("Font API Response:", font_data)
+        
+        # Validate required keys
+        required_categories = ['primary_heading', 'secondary_heading', 'body_text', 'accent_text']
+        required_properties = ['family', 'weight', 'style', 'fallback']
+        
+        for category in required_categories:
+            if category not in font_data:
+                raise ValueError(f"Missing required category: {category}")
+            for prop in required_properties:
+                if prop not in font_data[category]:
+                    raise ValueError(f"Missing property {prop} in {category}")
+
+        # Removed the following lines:
+        # font_families = {data['family'] for data in font_data.values()}
+        # font_data['google_fonts_url'] = generate_google_fonts_url(font_families)
+        
+        return font_data
 
     except Exception as e:
-        print(f"Error generating color palette: {str(e)}")
+        print(f"Error generating font recommendations: {str(e)}")
         return None
 
-import os
-import time
-import json
-import requests
-from datetime import datetime, timedelta
-from flask import url_for
-from werkzeug.utils import secure_filename
 
 def generate_city_image(city, weather_description):
     """Generate or retrieve a cached city image based on city and weather description."""
     try:
-        # Define directories for static images and cache within the project folder
-        static_dir = os.path.join('sentient-weather', 'static', 'images')
-        os.makedirs(static_dir, exist_ok=True)  # Ensure directory exists
+        # Define directories for static images and cache
+        project_root = os.path.abspath(os.path.dirname(__file__))
+        static_dir = os.path.join(project_root, 'static', 'images')
+        os.makedirs(static_dir, exist_ok=True)
 
         # Create a cache key based on the city and weather description
         safe_city_name = secure_filename(city.lower())
@@ -194,14 +459,13 @@ def generate_city_image(city, weather_description):
                 
             cache_timestamp = datetime.fromtimestamp(cache_data['timestamp'])
             if datetime.now() - cache_timestamp < timedelta(hours=24):
-                # Cache is valid
                 image_path = cache_data['image_path']
-                if os.path.exists(os.path.join('sentient-weather', 'static', image_path.lstrip('/static/'))):
+                static_image_path = os.path.join(project_root, 'static', image_path.lstrip('/static/'))
+                if os.path.exists(static_image_path):
                     print(f"Using cached image for {city} with {weather_description}")
                     return image_path
 
         # Initialize the OpenAI client for image generation
-        from openai import OpenAI
         client = OpenAI()
 
         # Generate a unique filename for the image
@@ -232,7 +496,7 @@ def generate_city_image(city, weather_description):
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
-            size="1024x1024",
+            size="1792x1024",
             quality="standard",
             n=1,
         )
@@ -244,8 +508,10 @@ def generate_city_image(city, weather_description):
             with open(image_path, 'wb') as f:
                 f.write(img_response.content)
 
-            # Use url_for to generate the correct URL path for serving the image
-            relative_path = url_for('static', filename=f'images/{filename}')
+            # Create relative path for serving the image
+            relative_path = f'/static/images/{filename}'
+            
+            # Save cache data
             cache_data = {
                 'timestamp': timestamp,
                 'image_path': relative_path,

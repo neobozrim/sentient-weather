@@ -1,211 +1,142 @@
-from flask import Flask, render_template, request, jsonify, url_for
-from dotenv import load_dotenv
 import os
-from datetime import datetime
-from geopy.geocoders import Nominatim
-import openmeteo_requests
-import requests_cache
-import pandas as pd
-from retry_requests import retry
-from anthropic import Anthropic
-from openai import OpenAI
 import json
+from flask import Flask, render_template, request, jsonify
+from dotenv import find_dotenv, load_dotenv
+from notebook_functions import (
+    get_city_coordinates,
+    get_weather_data,
+    get_weather_description,
+    generate_color_palette,
+    generate_city_image,
+    generate_font_recommendations,
+    get_css_variables
+)
 
 # Load environment variables
-load_dotenv()
+dotenv_path = find_dotenv()
+if dotenv_path:
+    load_dotenv(dotenv_path)
+else:
+    print("Warning: .env file not found")
+
+# Verify the environment variables are loaded
+if not os.getenv('ANTHROPIC_API_KEY') or not os.getenv('OPENAI_API_KEY'):
+    print("Error: Required API keys not found in environment variables")
+    print("Please ensure your .env file contains ANTHROPIC_API_KEY and OPENAI_API_KEY")
+    exit(1)
 
 app = Flask(__name__)
 
-def get_coordinates(city):
-    """Get coordinates for a given city."""
-    try:
-        geolocator = Nominatim(user_agent="sentient-weather-app")
-        location = geolocator.geocode(city)
-        return (location.latitude, location.longitude)
-    except:
-        return None
-
-def get_weather_data(latitude, longitude):
-    """Get weather data from Open Meteo API."""
-    try:
-        # Setup the Open-Meteo API client
-        cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-        retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-        openmeteo = openmeteo_requests.Client(session=retry_session)
-
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "current": ["temperature_2m", "is_day", "precipitation", 
-                       "weather_code", "cloud_cover", "wind_speed_10m"],
-            "daily": ["weather_code", "temperature_2m_max", "temperature_2m_min",
-                     "precipitation_sum", "precipitation_hours",
-                     "precipitation_probability_max", "wind_speed_10m_max"]
+def get_default_fonts():
+    """Return default font configuration when font generation fails"""
+    return {
+        'google_fonts_url': 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@600&family=Open+Sans&family=Roboto+Condensed&display=swap',
+        'primary_heading': {
+            'family': 'Playfair Display',
+            'fallback': 'serif',
+            'weight': '700',
+            'style': 'normal'
+        },
+        'secondary_heading': {
+            'family': 'Montserrat',
+            'fallback': 'sans-serif',
+            'weight': '600',
+            'style': 'normal'
+        },
+        'body_text': {
+            'family': 'Open Sans',
+            'fallback': 'sans-serif',
+            'weight': '400',
+            'style': 'normal'
+        },
+        'accent_text': {
+            'family': 'Roboto Condensed',
+            'fallback': 'sans-serif',
+            'weight': '400',
+            'style': 'normal'
         }
-
-        # Make API request
-        response = openmeteo.weather_api(url, params=params)[0]
-        
-        # Process current weather
-        current = response.Current()
-        current_data = {
-            'temperature': current.Variables(0).Value(),
-            'is_day': current.Variables(1).Value(),
-            'precipitation': current.Variables(2).Value(),
-            'weather_code': current.Variables(3).Value(),
-            'cloud_cover': current.Variables(4).Value(),
-            'wind_speed': current.Variables(5).Value(),
-        }
-
-        # Process forecast
-        daily = response.Daily()
-        forecast_data = []
-        
-        for i in range(len(daily.Variables(0).ValuesAsNumpy())):
-            forecast_data.append({
-                "date": pd.to_datetime(daily.Time() + i * 24 * 3600, unit="s"),
-                "weather_code": daily.Variables(0).ValuesAsNumpy()[i],
-                "temperature_max": daily.Variables(1).ValuesAsNumpy()[i],
-                "temperature_min": daily.Variables(2).ValuesAsNumpy()[i],
-                "precipitation_sum": daily.Variables(3).ValuesAsNumpy()[i],
-                "precipitation_hours": daily.Variables(4).ValuesAsNumpy()[i],
-                "precipitation_probability": daily.Variables(5).ValuesAsNumpy()[i],
-                "wind_speed_max": daily.Variables(6).ValuesAsNumpy()[i]
-            })
-
-        return {
-            'current': current_data,
-            'forecast': forecast_data
-        }
-    except Exception as e:
-        print(f"Error fetching weather data: {str(e)}")
-        return None
-
-def get_weather_description(weather_code):
-    """Get weather description from code."""
-    weather_codes = {
-        0: 'Clear sky',
-        1: 'Mainly clear',
-        2: 'Partly cloudy',
-        3: 'Overcast',
-        45: 'Fog',
-        48: 'Depositing rime fog',
-        51: 'Light drizzle',
-        53: 'Moderate drizzle',
-        55: 'Dense drizzle',
-        56: 'Light freezing drizzle',
-        57: 'Dense freezing drizzle',
-        61: 'Slight rain',
-        63: 'Moderate rain',
-        65: 'Heavy rain',
-        66: 'Light freezing rain',
-        67: 'Heavy freezing rain',
-        71: 'Slight snow fall',
-        73: 'Moderate snow fall',
-        75: 'Heavy snow fall',
-        77: 'Snow grains',
-        80: 'Slight rain showers',
-        81: 'Moderate rain showers',
-        82: 'Violent rain showers',
-        85: 'Slight snow showers',
-        86: 'Heavy snow showers',
-        95: 'Thunderstorm',
-        96: 'Thunderstorm with slight hail',
-        99: 'Thunderstorm with heavy hail'
     }
-    return weather_codes.get(int(weather_code), 'Unknown')
 
-def generate_color_palette(city, weather_data, weather_description):
-    """Generate color palette using Anthropic API."""
+def get_default_colors():
+    """Return default color configuration when color generation fails"""
+    return {
+        'color_page_background': '#F5E6D3',
+        'color_tiles_container': '#FFB366',
+        'color_tiles': '#FFFFFF',
+        'color_tile_heading': '#994D00',
+        'color_tile_temp_high': '#CC3300',
+        'color_tile_temp_low': '#336699',
+        'color_tile_weather_details': '#4D4D4D'
+    }
+
+def process_colors(color_response):
+    """Process color response from Anthropic API"""
     try:
-        client = Anthropic()
-        
-        prompt = f"""
-        You are a leading visual designer. You goal is to design attractive, vibrant color palettes for a weather app. 
-        Each color palette is inspired by the unique atmosphere of a city and current weather conditions.
-        The city and current weather conditions are:
-        - location: {city}
-        - weather description: {weather_description}
-        - current temperature: {weather_data['current']['temperature']}
-        - current precipitation: {weather_data['current']['precipitation']}
-        - current cloud cover: {weather_data['current']['cloud_cover']}
-        - current wind speed: {weather_data['current']['wind_speed']}
-        - is it day or night: {weather_data['current']['is_day']} (0 is night, 1 is day)
-        """
-
-        messages = [{
-            "role": "user",
-            "content": f"""{prompt}.
-            Requirements:
-            - The output must be valid JSON
-            - Use ONLY the following keys: dominant_color, secondary_color, accent_color
-            - Each key should get a hex color code
-            - Do not include any explanation or other text
-            - Each value should be of type string (str)
-            """
-        }]
-
-        response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
-            temperature=0.7,
-            messages=messages
-        )
-
-        colors = json.loads(response.content[0].text)
-        return colors
-
-    except Exception as e:
-        print(f"Error generating color palette: {str(e)}")
-        return None
-
-def generate_city_image(city, weather_description):
-    """Generate and save city image using DALL-E 3."""
-    try:
-        import time
-        import requests
-        from werkzeug.utils import secure_filename
-
-        # Get the directory of the current script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Setup paths
-        static_dir = os.path.join(script_dir, 'static', 'images')
-        os.makedirs(static_dir, exist_ok=True)
-
-        # Create filename
-        timestamp = int(time.time())
-        safe_city_name = secure_filename(city.lower())
-        filename = f"{safe_city_name}_{timestamp}.png"
-
-        # Generate image
-        client = OpenAI()
-        prompt = f"An oil painting of the most iconic scenery from {city} where the weather is {weather_description}."
-
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-
-        image_url = response.data[0].url
-
-        # Download and save image
-        img_response = requests.get(image_url)
-        if img_response.status_code == 200:
-            image_path = os.path.join(static_dir, filename)
-            with open(image_path, 'wb') as f:
-                f.write(img_response.content)
-
-            # Use url_for to generate the correct URL
-            return url_for('static', filename=f'images/{filename}')
+        # If the response is already a dict, return it
+        if isinstance(color_response, dict):
+            return color_response
             
+        # If it's a TextBlock response (from Anthropic), extract the text
+        if hasattr(color_response, '__getitem__') and hasattr(color_response[0], 'text'):
+            color_response = color_response[0].text
+            
+        # If it's a string, parse it as JSON
+        if isinstance(color_response, str):
+            return json.loads(color_response)
+            
+        return get_default_colors()
     except Exception as e:
-        print(f"Error generating city image: {str(e)}")
-        return None
+        print(f"Error processing colors: {str(e)}")
+        return get_default_colors()
+
+def process_fonts(generated_fonts):
+    """Process the generated fonts and ensure they have all required fields"""
+    try:
+        if not generated_fonts:
+            print("No fonts generated, using defaults")
+            return get_default_fonts()
+
+        # If generated_fonts is a string (JSON), parse it
+        if isinstance(generated_fonts, str):
+            try:
+                generated_fonts = json.loads(generated_fonts)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding font JSON: {e}")
+                return get_default_fonts()
+            
+        # Create a copy of the generated fonts to avoid modifying the original
+        processed_fonts = {}
+        
+        # Copy all font data from generated fonts
+        for font_type in ['primary_heading', 'secondary_heading', 'body_text', 'accent_text']:
+            if font_type in generated_fonts:
+                processed_fonts[font_type] = generated_fonts[font_type].copy()
+            else:
+                processed_fonts[font_type] = get_default_fonts()[font_type]
+                
+        # Validate and ensure all required fields exist
+        required_fields = ['family', 'weight', 'style', 'fallback']
+        for font_type in processed_fonts:
+            for field in required_fields:
+                if field not in processed_fonts[font_type]:
+                    processed_fonts[font_type][field] = get_default_fonts()[font_type][field]
+        
+        # Add Google Fonts URL
+        fonts_for_url = []
+        for font_type, font in processed_fonts.items():
+            if font_type != 'google_fonts_url':  # Skip the URL itself when building the URL
+                font_family = font['family'].replace(' ', '+')
+                font_weight = font['weight']
+                fonts_for_url.append(f"family={font_family}:wght@{font_weight}")
+        
+        processed_fonts['google_fonts_url'] = f"https://fonts.googleapis.com/css2?{'&'.join(fonts_for_url)}"
+        
+        print(f"Successfully processed fonts: {processed_fonts}")
+        return processed_fonts
+        
+    except Exception as e:
+        print(f"Error in process_fonts: {str(e)}")
+        return get_default_fonts()
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -214,39 +145,91 @@ def index():
             city = request.form['city']
             
             # Get coordinates
-            coordinates = get_coordinates(city)
+            coordinates = get_city_coordinates(city)
             if not coordinates:
-                return render_template('index.html', error="City not found")
+                return render_template('index.html', 
+                                     error="City not found",
+                                     fonts=get_default_fonts(),
+                                     font_css_vars=get_css_variables(get_default_fonts()),
+                                     colors=get_default_colors())
             
             # Get weather data
             weather_data = get_weather_data(*coordinates)
             if not weather_data:
-                return render_template('index.html', error="Could not fetch weather data")
+                return render_template('index.html', 
+                                     error="Could not fetch weather data",
+                                     fonts=get_default_fonts(),
+                                     font_css_vars=get_css_variables(get_default_fonts()),
+                                     colors=get_default_colors())
+            
+            print(f"Weather data received: {weather_data}")
             
             # Get weather description
             weather_description = get_weather_description(weather_data['current']['weather_code'])
+            print(f"Weather description: {weather_description}")
+
+            # Generate and process color palette
+            try:
+                print(f"Generating palette for: {city}")
+                color_response = generate_color_palette(city, weather_data, weather_description)
+                print(f"Color API Response: {color_response}")
+                colors = process_colors(color_response)
+                print(f"Processed colors: {colors}")
+            except Exception as e:
+                print(f"Error generating/processing colors: {str(e)}")
+                colors = get_default_colors()
             
-            # Generate color palette
-            colors = generate_color_palette(city, weather_data, weather_description)
-            if not colors:
-                return render_template('index.html', error="Could not generate color palette")
+            # Generate and process font recommendations
+            try:
+                raw_fonts = generate_font_recommendations(city, weather_data)
+                print(f"Font API Response: {json.dumps(raw_fonts, indent=4)}")
+                
+                if not raw_fonts:
+                    print("No font recommendations received")
+                    processed_fonts = get_default_fonts()
+                else:
+                    processed_fonts = process_fonts(raw_fonts)
+                    
+                font_css_vars = get_css_variables(processed_fonts)
+                print(f"Generated CSS variables: {font_css_vars}")
+                
+            except Exception as e:
+                print(f"Error in font generation/processing: {str(e)}")
+                processed_fonts = get_default_fonts()
+                font_css_vars = get_css_variables(processed_fonts)
             
             # Generate image
-            image_path = generate_city_image(city, weather_description)
-            if not image_path:
-                return render_template('index.html', error="Could not generate city image")
+            try:
+                image_path = generate_city_image(city, weather_description)
+                print(f"Generated new image for {city} with {weather_description}")
+            except Exception as e:
+                print(f"Error generating image: {str(e)}")
+                image_path = None
             
             return render_template('index.html',
                                  city=city,
                                  weather_data=weather_data,
                                  weather_description=weather_description,
                                  colors=colors,
+                                 fonts=processed_fonts,
+                                 font_css_vars=font_css_vars,
                                  image_path=image_path)
             
         except Exception as e:
-            return render_template('index.html', error=str(e))
-            
-    return render_template('index.html')
+            print(f"Error in main route handler: {str(e)}")
+            default_fonts = get_default_fonts()
+            return render_template('index.html', 
+                                 error=str(e),
+                                 fonts=default_fonts,
+                                 font_css_vars=get_css_variables(default_fonts),
+                                 colors=get_default_colors())
+    
+    # GET request - return initial page with default styling
+    default_fonts = get_default_fonts()
+    return render_template('index.html',
+                         fonts=default_fonts,
+                         font_css_vars=get_css_variables(default_fonts),
+                         colors=get_default_colors())
 
 if __name__ == '__main__':
     app.run(debug=True)
