@@ -110,16 +110,7 @@
                 <input type="text" name="city" placeholder="Enter city name" required>
                 <button type="submit">Get Weather</button>
             </form>
-             {% if fonts %}
-    <!-- Add this somewhere visible in your template for testing -->
-    <div class="font-test">
-        <h3>Font Test Panel</h3>
-        <p class="test-primary">Primary Heading Font: {{ fonts.primary_heading.family }}</p>
-        <p class="test-secondary">Secondary Heading Font: {{ fonts.secondary_heading.family }}</p>
-        <p class="test-body">Body Text Font: {{ fonts.body_text.family }}</p>
-        <p class="test-accent">Accent Text Font: {{ fonts.accent_text.family }}</p>
-    </div>
-    {% endif %}
+             
         </header>
 
         <main class="content" role="main">
@@ -213,6 +204,16 @@
                         <div class="color-swatch" style="background-color: {{ colors.color_page_background }}" title="Page Background"></div>
                         <div class="color-swatch" style="background-color: {{ colors.color_tiles_container }}" title="Tiles Container"></div>
                         <div class="color-swatch" style="background-color: {{ colors.color_tiles }}" title="Tiles"></div>
+                    </div>
+                    {% endif %}
+                    {% if fonts %}
+                    <!-- Add this somewhere visible in your template for testing -->
+                    <div class="font-test">
+                        <h3>Font Test Panel</h3>
+                        <p class="test-primary">Primary Heading Font: {{ fonts.primary_heading.family }}</p>
+                        <p class="test-secondary">Secondary Heading Font: {{ fonts.secondary_heading.family }}</p>
+                        <p class="test-body">Body Text Font: {{ fonts.body_text.family }}</p>
+                        <p class="test-accent">Accent Text Font: {{ fonts.accent_text.family }}</p>
                     </div>
                     {% endif %}
                 </div>
